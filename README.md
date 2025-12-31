@@ -79,6 +79,39 @@ pnpm clawdis agent --message "Ship checklist" --thinking high
 
 If you run from source, prefer `pnpm clawdis …` (not global `clawdis`).
 
+## Deployment
+
+### Production Deployment Options
+
+Choose the deployment method that best fits your infrastructure:
+
+#### 🐳 Docker (Recommended for quick setup)
+```bash
+# Pull from GitHub Container Registry
+docker pull ghcr.io/steipete/clawdis:latest
+
+# Or use docker-compose
+docker compose up -d
+```
+See [Docker Deployment Guide](docs/docker-deployment.md)
+
+#### 🖥️ VM/VPS (Recommended for performance)
+```bash
+# Automated setup script
+sudo bash scripts/vm-deploy.sh
+
+# Sets up systemd service, Node.js, and all dependencies
+```
+See [VM Deployment Guide](docs/vm-deployment.md)
+
+#### ⚙️ GitHub Actions (CI/CD)
+Automated deployment workflows included:
+- **Docker Build & Publish** - Auto-builds images to GHCR
+- **Deploy to VM** - Deploy via SSH to your server
+- **Deploy via Docker** - Deploy containers remotely
+
+See [GitHub Deployment Guide](docs/github-deployment.md) | [Setup Instructions](.github/DEPLOYMENT.md)
+
 ## Chat commands
 
 Send these in WhatsApp/Telegram/WebChat (group commands are owner-only):
