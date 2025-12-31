@@ -1,0 +1,135 @@
+name: Deploy via Docker
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      image_tag:
+        description: 'Docker image tag to deploy'
+        required: false
+        type: string
+        default: 'latest'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy Docker container
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          REGISTRY: ghcr.io
+          IMAGE_NAME: ${{ github.repository }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+          GATEWAY_TOKEN: ${{ secrets.CLAWDIS_GATEWAY_TOKEN }}
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          DISCORD_TOKEN: ${{ secrets.DISCORD_BOT_TOKEN }}
+        run: |
+          ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            set -e
+            echo "🚀 Starting Docker deployment..."
+
+            # Create deployment directory if not exists
+            mkdir -p ~/clawdis-deploy
+            cd ~/clawdis-deploy
+
+            # Login to GitHub Container Registry
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Pull latest image
+            echo "📥 Pulling Docker image..."
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+            # Stop and remove existing container
+            echo "🛑 Stopping existing container..."
+            docker stop clawdis-gateway || true
+            docker rm clawdis-gateway || true
+
+            # Create volumes if not exist
+            docker volume create clawdis-config || true
+            docker volume create clawdis-workspace || true
+
+            # Run new container
+            echo "▶️  Starting new container..."
+            docker run -d \
+              --name clawdis-gateway \
+              --restart unless-stopped \
+              -p 127.0.0.1:18789:18789 \
+              -p 127.0.0.1:18790:18790 \
+              -p 127.0.0.1:18793:18793 \
+              -v clawdis-config:/home/clawdis/.clawdis \
+              -v clawdis-workspace:/home/clawdis/clawd \
+              -e NODE_ENV=production \
+              -e CLAWDIS_GATEWAY_TOKEN="${{ env.GATEWAY_TOKEN }}" \
+              -e TELEGRAM_BOT_TOKEN="${{ env.TELEGRAM_TOKEN }}" \
+              -e DISCORD_BOT_TOKEN="${{ env.DISCORD_TOKEN }}" \
+              --memory=1g \
+              --cpus=1.0 \
+              ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ env.IMAGE_TAG }}
+
+            echo "✅ Container started successfully!"
+          EOF
+
+      - name: Verify deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          echo "⏳ Waiting for container to start..."
+          sleep 10
+
+          ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            # Check if container is running
+            if docker ps | grep -q clawdis-gateway; then
+              echo "✅ Container is running"
+              echo ""
+              echo "📊 Container status:"
+              docker ps --filter name=clawdis-gateway --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+              echo ""
+              echo "📝 Recent logs:"
+              docker logs --tail 20 clawdis-gateway
+            else
+              echo "❌ Container failed to start"
+              docker logs clawdis-gateway
+              exit 1
+            fi
+          EOF
+
+      - name: Health check
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            # Wait a bit more for service to be fully ready
+            sleep 5
+
+            # Check health endpoint
+            if docker exec clawdis-gateway node -e "require('http').get('http://localhost:18789', (r) => process.exit(r.statusCode === 426 ? 0 : 1))"; then
+              echo "✅ Health check passed"
+            else
+              echo "⚠️  Health check warning (may be normal during startup)"
+            fi
+          EOF

@@ -1,0 +1,112 @@
+name: Deploy to VM
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deployment environment'
+        required: true
+        type: choice
+        options:
+          - production
+          - staging
+          - development
+      restart_only:
+        description: 'Only restart service (skip update)'
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        if: ${{ !inputs.restart_only }}
+
+      - name: Setup SSH key
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Add host to known_hosts
+        run: |
+          mkdir -p ~/.ssh
+          ssh-keyscan -H ${{ secrets.DEPLOY_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Deploy via SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH || '/opt/clawdis/app' }}
+        run: |
+          if [ "${{ inputs.restart_only }}" = "true" ]; then
+            ssh $DEPLOY_USER@$DEPLOY_HOST "sudo systemctl restart clawdis-gateway.service"
+            echo "✅ Service restarted successfully"
+          else
+            ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+              set -e
+              echo "🚀 Starting deployment..."
+
+              # Navigate to app directory
+              cd ${{ env.DEPLOY_PATH }}
+
+              # Pull latest changes
+              echo "📥 Pulling latest changes..."
+              git fetch origin
+              git reset --hard origin/main
+
+              # Install dependencies
+              echo "📦 Installing dependencies..."
+              export NVM_DIR="$HOME/.nvm"
+              [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+              pnpm install --frozen-lockfile
+
+              # Build
+              echo "🔨 Building..."
+              pnpm build
+              pnpm ui:build
+
+              # Restart service
+              echo "♻️  Restarting service..."
+              sudo systemctl restart clawdis-gateway.service
+
+              # Check status
+              echo "🔍 Checking service status..."
+              sudo systemctl status clawdis-gateway.service --no-pager
+
+              echo "✅ Deployment completed successfully!"
+          EOF
+          fi
+
+      - name: Verify deployment
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          echo "⏳ Waiting for service to start..."
+          sleep 10
+
+          ssh $DEPLOY_USER@$DEPLOY_HOST << 'EOF'
+            # Check if service is running
+            if systemctl is-active --quiet clawdis-gateway.service; then
+              echo "✅ Service is running"
+              sudo journalctl -u clawdis-gateway.service -n 20 --no-pager
+            else
+              echo "❌ Service failed to start"
+              sudo journalctl -u clawdis-gateway.service -n 50 --no-pager
+              exit 1
+            fi
+          EOF
+
+      - name: Notify deployment status
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "✅ Deployment to ${{ inputs.environment }} successful"
+          else
+            echo "❌ Deployment to ${{ inputs.environment }} failed"
+          fi
