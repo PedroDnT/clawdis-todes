@@ -1,0 +1,52 @@
+# Dependencies
+node_modules
+.pnpm-store
+
+# Build output (will be rebuilt in container)
+dist
+ui/dist
+
+# Development
+.git
+.github
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Logs
+*.log
+logs
+
+# Environment
+.env
+.env.local
+
+# Test
+coverage
+.nyc_output
+
+# Credentials (NEVER include in image)
+.clawdis/credentials/*
+
+# macOS/iOS/Android apps
+apps/macos
+apps/ios
+apps/android
+Swabble
+
+# Documentation (included selectively)
+# docs
+
+# Large files
+*.mp4
+*.mov
+*.avi
+*.zip
+*.tar.gz

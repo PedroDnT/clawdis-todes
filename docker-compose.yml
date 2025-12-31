@@ -1,0 +1,70 @@
+version: '3.8'
+
+services:
+  clawdis-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clawdis-gateway
+    restart: unless-stopped
+
+    # Ports
+    ports:
+      - "127.0.0.1:18789:18789"  # Gateway WebSocket (loopback only)
+      - "127.0.0.1:18790:18790"  # Bridge (optional, for mobile nodes)
+      - "127.0.0.1:18793:18793"  # Canvas host
+
+    # Volumes for persistence
+    volumes:
+      # Configuration and credentials
+      - clawdis-config:/home/clawdis/.clawdis
+      # Agent workspace
+      - clawdis-workspace:/home/clawdis/clawd
+      # Optional: mount custom config
+      # - ./clawdis.json:/home/clawdis/.clawdis/clawdis.json:ro
+
+    # Environment variables
+    environment:
+      - NODE_ENV=production
+      - TZ=UTC
+      # Optional: set gateway token for auth
+      # - CLAWDIS_GATEWAY_TOKEN=${CLAWDIS_GATEWAY_TOKEN}
+      # Optional: Telegram bot token
+      # - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      # Optional: Discord bot token
+      # - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+    # Health check
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:18789', (r) => process.exit(r.statusCode === 426 ? 0 : 1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+    # Logging
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  clawdis-config:
+    driver: local
+  clawdis-workspace:
+    driver: local
+
+networks:
+  default:
+    name: clawdis-network
